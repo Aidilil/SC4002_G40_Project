@@ -11,5 +11,5 @@ Stage 1 baseline scaffolding for MASSIVE 1.0 (en-US):
 Run tests:
 
 ```bash
-python -m pytest tests/test_stage1_baseline.py
+python -m unittest tests/test_stage1_baseline.py -v
 ```
