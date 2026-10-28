@@ -8,20 +8,33 @@ import numpy as np
 import torch
 
 
-OFFICIAL_SPLITS = {"train": 11514, "dev": 2033, "test": 2974}
+OFFICIAL_SPLITS = {
+    "train": 11514,
+    "dev": 2033,
+    "test": 2974,
+}
 
 
 def set_seed(seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
+
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 
+def seed_worker(worker_id: int) -> None:
+    worker_seed = torch.initial_seed() % (2 ** 32)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
 def assert_official_split_counts(records: Iterable[Dict]) -> None:
     counts = {"train": 0, "dev": 0, "test": 0}
+
     for record in records:
         partition = str(record.get("partition", "")).lower()
         if partition in counts:
@@ -41,17 +54,21 @@ class ExperimentTracker:
         self.metrics_path = self.experiment_dir / "metrics_history.json"
         self.log_path = self.experiment_dir / "train.log"
         self.best_checkpoint_path = self.experiment_dir / "best_checkpoint.pt"
+
         self.history: List[Dict] = []
 
     def log(self, message: str) -> None:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{timestamp}] {message}"
+
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
+
         print(line)
 
     def append_metrics(self, metrics: Dict) -> None:
         self.history.append(metrics)
+
         with self.metrics_path.open("w", encoding="utf-8") as f:
             json.dump(self.history, f, indent=2)
 
