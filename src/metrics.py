@@ -1,4 +1,5 @@
 from typing import Dict, Iterable, List, Sequence, Tuple
+from itertools import zip_longest
 
 import torch
 
@@ -10,6 +11,8 @@ def _tags_from_ids(label_ids: Sequence[int], id2slot: Dict[int, str]) -> List[st
 
 
 def bio_tags_to_spans(tokens: Sequence[str], tags: Sequence[str]) -> List[Tuple[str, str]]:
+    if len(tokens) != len(tags):
+        raise ValueError('Token and BIO tag counts must match.')
     spans: List[Tuple[str, str]] = []
     current_type = None
     current_tokens: List[str] = []
@@ -52,7 +55,10 @@ def compute_slot_micro_f1(
 ) -> float:
     tp = fp = fn = 0
 
-    for gold_spans, pred_spans in zip(all_gold_spans, all_pred_spans):
+    missing = object()
+    for gold_spans, pred_spans in zip_longest(all_gold_spans, all_pred_spans, fillvalue=missing):
+        if gold_spans is missing or pred_spans is missing:
+            raise ValueError('Gold and predicted span collections must have equal lengths.')
         gold_set = set(gold_spans)
         pred_set = set(pred_spans)
 
@@ -68,6 +74,8 @@ def compute_slot_micro_f1(
 
 
 def compute_intent_accuracy(gold: List[int], pred: List[int]) -> float:
+    if len(gold) != len(pred):
+        raise ValueError('Gold and predicted intent counts must match.')
     if not gold:
         return 0.0
     correct = sum(1 for g, p in zip(gold, pred) if g == p)
@@ -79,6 +87,7 @@ def evaluate_model(
     dataloader,
     device: torch.device,
     id2slot: Dict[int, str],
+    round_results: bool = True,
 ) -> Dict[str, float]:
     model.eval()
 
@@ -104,12 +113,13 @@ def evaluate_model(
             all_pred_intents.extend(pred_intents)
             all_gold_intents.extend(gold_intents)
 
-            pred_slot_ids = slot_logits.argmax(dim=-1).cpu()
+            pred_slot_ids = model.decode_slots(slot_logits, attention_mask).cpu()
             gold_slot_ids = batch["slot_labels"].cpu()
 
             for i, seq_len in enumerate(batch["seq_lens"].tolist()):
                 tokens = tokenize_words(batch["raw_utt"][i])
-                tokens = tokens[:seq_len]
+                if len(tokens) != seq_len:
+                    raise ValueError('Raw utterance token count does not match encoded sequence length.')
 
                 pred_tags = _tags_from_ids(pred_slot_ids[i, :seq_len].tolist(), id2slot)
                 gold_tags = _tags_from_ids(gold_slot_ids[i, :seq_len].tolist(), id2slot)
@@ -120,8 +130,9 @@ def evaluate_model(
     intent_accuracy = compute_intent_accuracy(all_gold_intents, all_pred_intents)
     slot_micro_f1 = compute_slot_micro_f1(all_gold_spans, all_pred_spans)
 
-    return {
-        "intent_accuracy": round(intent_accuracy, 2),
-        "slot_micro_f1": round(slot_micro_f1, 2),
-        "combined_score": round((intent_accuracy + slot_micro_f1) / 2.0, 2),
+    results = {
+        "intent_accuracy": intent_accuracy,
+        "slot_micro_f1": slot_micro_f1,
+        "combined_score": (intent_accuracy + slot_micro_f1) / 2.0,
     }
+    return {key: round(value, 2) for key, value in results.items()} if round_results else results

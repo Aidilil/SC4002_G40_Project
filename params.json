@@ -3,7 +3,7 @@
   "data_path": "1.0/data/en-US.jsonl",
   "experiment_dir": "experiments/baseline",
   "embedding": {
-    "glove_path": "",
+    "glove_path": "embeddings/glove.6B.300d.txt",
     "embedding_dim": 300,
     "freeze": false
   },

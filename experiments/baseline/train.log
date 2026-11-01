@@ -1,0 +1,22 @@
+[2026-10-29 11:42:27] epoch=1 train_loss=11.3323 dev_loss=8.0604 intent_acc=19.48% slot_f1=36.61% combined=28.04
+[2026-10-29 11:42:36] epoch=2 train_loss=6.5137 dev_loss=5.0541 intent_acc=46.73% slot_f1=61.15% combined=53.94
+[2026-10-29 11:42:46] epoch=3 train_loss=3.9684 dev_loss=3.6728 intent_acc=66.21% slot_f1=69.23% combined=67.72
+[2026-10-29 11:42:55] epoch=4 train_loss=2.6801 dev_loss=3.1033 intent_acc=72.95% slot_f1=73.77% combined=73.36
+[2026-10-29 11:43:04] epoch=5 train_loss=1.9566 dev_loss=2.8570 intent_acc=78.06% slot_f1=75.37% combined=76.72
+[2026-10-29 11:43:13] epoch=6 train_loss=1.5101 dev_loss=2.8627 intent_acc=77.91% slot_f1=74.31% combined=76.11
+[2026-10-29 11:43:22] epoch=7 train_loss=1.1926 dev_loss=2.8369 intent_acc=78.95% slot_f1=76.59% combined=77.77
+[2026-10-29 11:43:31] epoch=8 train_loss=0.9710 dev_loss=2.8670 intent_acc=79.93% slot_f1=77.50% combined=78.72
+[2026-10-29 11:43:40] epoch=9 train_loss=0.7978 dev_loss=2.9102 intent_acc=80.08% slot_f1=76.33% combined=78.20
+[2026-10-29 11:43:49] epoch=10 train_loss=0.6489 dev_loss=3.0242 intent_acc=80.77% slot_f1=77.91% combined=79.34
+[2026-10-29 11:43:58] epoch=11 train_loss=0.5463 dev_loss=3.0997 intent_acc=80.37% slot_f1=76.29% combined=78.33
+[2026-10-29 11:44:06] epoch=12 train_loss=0.4553 dev_loss=3.1472 intent_acc=80.91% slot_f1=77.05% combined=78.98
+[2026-10-29 11:44:15] epoch=13 train_loss=0.3785 dev_loss=3.2845 intent_acc=80.52% slot_f1=76.26% combined=78.39
+[2026-10-29 11:44:24] epoch=14 train_loss=0.2382 dev_loss=3.2824 intent_acc=82.73% slot_f1=77.87% combined=80.30
+[2026-10-29 11:44:33] epoch=15 train_loss=0.1695 dev_loss=3.3932 intent_acc=82.10% slot_f1=77.50% combined=79.80
+[2026-10-29 11:44:41] epoch=16 train_loss=0.1290 dev_loss=3.5335 intent_acc=81.90% slot_f1=77.41% combined=79.65
+[2026-10-29 11:44:50] epoch=17 train_loss=0.1102 dev_loss=3.7453 intent_acc=82.10% slot_f1=77.55% combined=79.82
+[2026-10-29 11:44:59] epoch=18 train_loss=0.0816 dev_loss=3.7139 intent_acc=82.39% slot_f1=77.49% combined=79.94
+[2026-10-29 11:45:07] epoch=19 train_loss=0.0624 dev_loss=3.7565 intent_acc=82.19% slot_f1=77.66% combined=79.93
+[2026-10-29 11:45:16] epoch=20 train_loss=0.0566 dev_loss=3.8371 intent_acc=82.39% slot_f1=77.51% combined=79.95
+[2026-10-29 11:45:17] best_epoch=14 best_dev=80.30 checkpoint=best_checkpoint.pt
+[2026-10-29 11:45:17] test_intent_acc=80.33% test_slot_f1=73.83% test_combined=77.08
