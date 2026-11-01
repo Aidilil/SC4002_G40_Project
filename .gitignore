@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.DS_Store
+*.tar.gz
+1.0/

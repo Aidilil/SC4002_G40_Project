@@ -1,138 +1,109 @@
-from typing import Dict, Iterable, List, Sequence, Tuple
-from itertools import zip_longest
-
 import torch
+import re
 
-from .data_loader import tokenize_words
-
-
-def _tags_from_ids(label_ids: Sequence[int], id2slot: Dict[int, str]) -> List[str]:
-    return [id2slot[int(idx)] for idx in label_ids]
-
-
-def bio_tags_to_spans(tokens: Sequence[str], tags: Sequence[str]) -> List[Tuple[str, str]]:
-    if len(tokens) != len(tags):
-        raise ValueError('Token and BIO tag counts must match.')
-    spans: List[Tuple[str, str]] = []
-    current_type = None
-    current_tokens: List[str] = []
-
-    def flush() -> None:
-        nonlocal current_type, current_tokens
-        if current_type and current_tokens:
-            spans.append((current_type, " ".join(current_tokens)))
-        current_type = None
-        current_tokens = []
-
-    for token, tag in zip(tokens, tags):
-        if tag == "O" or tag == "<PAD>":
-            flush()
-            continue
-
-        if "-" not in tag:
-            flush()
-            continue
-
-        prefix, slot_type = tag.split("-", 1)
-        if prefix == "B":
-            flush()
-            current_type = slot_type
-            current_tokens = [token]
-        elif prefix == "I" and current_type == slot_type:
-            current_tokens.append(token)
-        else:
-            flush()
-            current_type = slot_type
-            current_tokens = [token]
-
-    flush()
+def extract_spans_from_bio(seq, id2slot):
+    """Extracts (slot_type, start_idx, end_idx) from a sequence of BIO tags."""
+    spans = []
+    current_span = None
+    for i, tag_id in enumerate(seq):
+        tag = id2slot.get(tag_id, 'O')
+        if tag == 'O' or tag == '<PAD>':
+            if current_span:
+                spans.append(current_span)
+                current_span = None
+        elif tag.startswith('B-'):
+            if current_span:
+                spans.append(current_span)
+            current_span = (tag[2:], i, i)
+        elif tag.startswith('I-'):
+            if current_span and current_span[0] == tag[2:] and current_span[2] == i - 1:
+                current_span = (current_span[0], current_span[1], i)
+            else:
+                if current_span:
+                    spans.append(current_span)
+                current_span = (tag[2:], i, i)
+    if current_span:
+        spans.append(current_span)
     return spans
 
+def extract_spans_from_annot_utt(annot_utt):
+    """Extracts ground truth (slot_type, text_span) from raw annot_utt."""
+    spans = []
+    pattern = r'\[(.*?):\s*(.*?)\]'
+    matches = re.findall(pattern, annot_utt)
+    for slot_type, text_span in matches:
+        spans.append((slot_type.strip(), text_span.strip()))
+    return spans
 
-def compute_slot_micro_f1(
-    all_gold_spans: Iterable[List[Tuple[str, str]]],
-    all_pred_spans: Iterable[List[Tuple[str, str]]],
-) -> float:
-    tp = fp = fn = 0
+def get_predicted_text_spans(bio_spans, raw_utt_words):
+    """Converts index spans to text strings using the raw utterance."""
+    text_spans = []
+    for slot_type, start, end in bio_spans:
+        if start < len(raw_utt_words) and end < len(raw_utt_words):
+            span_text = " ".join(raw_utt_words[start:end+1])
+            text_spans.append((slot_type, span_text))
+    return text_spans
 
-    missing = object()
-    for gold_spans, pred_spans in zip_longest(all_gold_spans, all_pred_spans, fillvalue=missing):
-        if gold_spans is missing or pred_spans is missing:
-            raise ValueError('Gold and predicted span collections must have equal lengths.')
-        gold_set = set(gold_spans)
-        pred_set = set(pred_spans)
-
-        tp += len(gold_set & pred_set)
-        fp += len(pred_set - gold_set)
-        fn += len(gold_set - pred_set)
-
-    denominator = (2 * tp + fp + fn)
-    if denominator == 0:
-        return 0.0
-
-    return 100.0 * (2 * tp) / denominator
-
-
-def compute_intent_accuracy(gold: List[int], pred: List[int]) -> float:
-    if len(gold) != len(pred):
-        raise ValueError('Gold and predicted intent counts must match.')
-    if not gold:
-        return 0.0
-    correct = sum(1 for g, p in zip(gold, pred) if g == p)
-    return 100.0 * correct / len(gold)
-
-
-def evaluate_model(
-    model: torch.nn.Module,
-    dataloader,
-    device: torch.device,
-    id2slot: Dict[int, str],
-    round_results: bool = True,
-) -> Dict[str, float]:
+def evaluate_model(model, dataloader, device, id2slot):
+    """Evaluates the model and returns formatted percentage metrics."""
     model.eval()
-
-    all_gold_intents: List[int] = []
-    all_pred_intents: List[int] = []
-    all_gold_spans: List[List[Tuple[str, str]]] = []
-    all_pred_spans: List[List[Tuple[str, str]]] = []
-
+    
+    intent_correct = 0
+    intent_total = 0
+    
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
+    
     with torch.no_grad():
         for batch in dataloader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            seq_lens = batch["seq_lens"].to(device)
-
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            seq_lens = batch['seq_lens'].to(device)
+            intent_labels = batch['intent_label'].to(device)
+            
             _, intent_logits, slot_logits = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                seq_lens=seq_lens,
+                input_ids, 
+                attention_mask=attention_mask, 
+                seq_lens=seq_lens
             )
+            
+            # 1. Intent Accuracy Calculation
+            intent_preds = torch.argmax(intent_logits, dim=-1)
+            intent_correct += (intent_preds == intent_labels).sum().item()
+            intent_total += intent_labels.size(0)
+            
+            # 2. Exact-Match Slot Micro-F1 Calculation
+            slot_preds = torch.argmax(slot_logits, dim=-1).cpu().numpy()
+            raw_utts = batch['raw_utt']
+            raw_annot_utts = batch['raw_annot_utt']
+            
+            for i in range(len(raw_utts)):
+                seq_len = seq_lens[i].item()
+                pred_seq = slot_preds[i][:seq_len]
+                pred_bio_spans = extract_spans_from_bio(pred_seq, id2slot)
+                
+                raw_words = raw_utts[i].split()
+                pred_text_spans = get_predicted_text_spans(pred_bio_spans, raw_words)
+                pred_set = set(pred_text_spans)
+                
+                true_text_spans = extract_spans_from_annot_utt(raw_annot_utts[i])
+                true_set = set(true_text_spans)
+                
+                total_tp += len(pred_set.intersection(true_set))
+                total_fp += len(pred_set - true_set)
+                total_fn += len(true_set - pred_set)
 
-            pred_intents = intent_logits.argmax(dim=-1).cpu().tolist()
-            gold_intents = batch["intent_label"].cpu().tolist()
-            all_pred_intents.extend(pred_intents)
-            all_gold_intents.extend(gold_intents)
-
-            pred_slot_ids = model.decode_slots(slot_logits, attention_mask).cpu()
-            gold_slot_ids = batch["slot_labels"].cpu()
-
-            for i, seq_len in enumerate(batch["seq_lens"].tolist()):
-                tokens = tokenize_words(batch["raw_utt"][i])
-                if len(tokens) != seq_len:
-                    raise ValueError('Raw utterance token count does not match encoded sequence length.')
-
-                pred_tags = _tags_from_ids(pred_slot_ids[i, :seq_len].tolist(), id2slot)
-                gold_tags = _tags_from_ids(gold_slot_ids[i, :seq_len].tolist(), id2slot)
-
-                all_pred_spans.append(bio_tags_to_spans(tokens, pred_tags))
-                all_gold_spans.append(bio_tags_to_spans(tokens, gold_tags))
-
-    intent_accuracy = compute_intent_accuracy(all_gold_intents, all_pred_intents)
-    slot_micro_f1 = compute_slot_micro_f1(all_gold_spans, all_pred_spans)
-
-    results = {
-        "intent_accuracy": intent_accuracy,
-        "slot_micro_f1": slot_micro_f1,
-        "combined_score": (intent_accuracy + slot_micro_f1) / 2.0,
+    # 3. Final Metric Formatting
+    intent_accuracy = (intent_correct / intent_total) * 100 if intent_total > 0 else 0.0
+    
+    denominator = (2 * total_tp + total_fp + total_fn)
+    slot_micro_f1 = (100 * (2 * total_tp) / denominator) if denominator > 0 else 0.0
+    
+    combined_score = (intent_accuracy + slot_micro_f1) / 2
+    
+    return {
+        'intent_accuracy': round(intent_accuracy, 2),
+        'slot_micro_f1': round(slot_micro_f1, 2),
+        'combined_score': round(combined_score, 2)
     }
-    return {key: round(value, 2) for key, value in results.items()} if round_results else results
