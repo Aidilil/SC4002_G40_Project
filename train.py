@@ -4,9 +4,10 @@ from pathlib import Path
 
 import torch
 from torch.optim import Adam, AdamW
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.data_loader import get_dataloaders
+from src.data_loader import get_dataloaders, _collate_batch
 from src.metrics import evaluate_model
 from src.model import JointBiLSTMAttention
 from src.utils import ExperimentTracker, set_seed
@@ -30,7 +31,7 @@ def make_optimizer(model, config):
 def evaluate_loss(model, dataloader, device):
     model.eval()
     total_loss = 0.0
-    steps = 0
+    count = 0
 
     with torch.no_grad():
         for batch in dataloader:
@@ -41,10 +42,11 @@ def evaluate_loss(model, dataloader, device):
                 intent_labels=batch["intent_label"].to(device),
                 slot_labels=batch["slot_labels"].to(device),
             )
-            total_loss += float(loss.item())
-            steps += 1
+            size = len(batch['seq_lens'])
+            total_loss += float(loss.item()) * size
+            count += size
 
-    return total_loss / max(1, steps)
+    return total_loss / max(1, count)
 
 
 def train(config_path: str):
@@ -62,12 +64,20 @@ def train(config_path: str):
         enforce_official_counts=True,
     )
 
+    # Match the grid worker's independent, seeded shuffle and initialization.
+    generator = torch.Generator().manual_seed(int(config.get('seed', 42)))
+    dataloaders['train'] = DataLoader(
+        dataloaders['train'].dataset, batch_size=int(config['training']['batch_size']),
+        shuffle=True, collate_fn=_collate_batch, generator=generator)
+    set_seed(int(config.get('seed', 42)))
+
     model = JointBiLSTMAttention(
         vocab_size=len(vocab.word2id),
         embedding_dim=int(config["embedding"]["embedding_dim"]),
         hidden_dim=int(config["model"]["hidden_dim"]),
         num_intents=len(vocab.intent2id),
         num_slots=len(vocab.slot2id),
+        id2slot={idx: slot for slot, idx in vocab.slot2id.items()},
         num_layers=int(config["model"].get("num_layers", 2)),
         dropout=float(config["training"].get("dropout", 0.3)),
         slot_loss_weight=float(config["training"].get("slot_loss_weight", 1.0)),
@@ -85,10 +95,13 @@ def train(config_path: str):
     best_score = float("-inf")
     best_epoch = -1
     best_metrics = None
+    stale_epochs = 0
+    patience = int(config['training'].get('early_stopping_patience', 0))
 
     for epoch in range(1, int(config["training"]["num_epochs"]) + 1):
         model.train()
         epoch_loss = 0.0
+        epoch_count = 0
         progress = tqdm(dataloaders["train"], desc=f"Epoch {epoch}", leave=False)
 
         for batch in progress:
@@ -108,12 +121,14 @@ def train(config_path: str):
             )
             optimizer.step()
 
-            epoch_loss += float(loss.item())
+            size = len(batch['seq_lens'])
+            epoch_loss += float(loss.item()) * size
+            epoch_count += size
             progress.set_postfix(loss=f"{loss.item():.4f}")
 
-        train_loss = epoch_loss / max(1, len(dataloaders["train"]))
+        train_loss = epoch_loss / max(1, epoch_count)
         dev_loss = evaluate_loss(model, dataloaders["dev"], device)
-        dev_metrics = evaluate_model(model, dataloaders["dev"], device, id2slot)
+        dev_metrics = evaluate_model(model, dataloaders["dev"], device, id2slot, round_results=False)
         scheduler.step(dev_metrics["combined_score"])
 
         row = {
@@ -140,12 +155,18 @@ def train(config_path: str):
             best_epoch = epoch
             best_metrics = dev_metrics
             trackers.save_checkpoint(model, optimizer, epoch, best_score)
+            stale_epochs = 0
+        else:
+            stale_epochs += 1
+        if patience > 0 and stale_epochs >= patience:
+            trackers.log(f'Early stopping at epoch {epoch}')
+            break
 
     checkpoint = torch.load(trackers.best_checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    reloaded_dev_metrics = evaluate_model(model, dataloaders["dev"], device, id2slot)
+    reloaded_dev_metrics = evaluate_model(model, dataloaders["dev"], device, id2slot, round_results=False)
 
-    if reloaded_dev_metrics["combined_score"] != round(best_score, 2):
+    if abs(reloaded_dev_metrics["combined_score"] - best_score) > 1e-9:
         raise AssertionError(
             "Reloaded dev score mismatch: "
             f"{reloaded_dev_metrics['combined_score']} != {round(best_score, 2)}"
